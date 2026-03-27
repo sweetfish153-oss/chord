@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>Chord Transposer V3.1 Fix</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        :root {
+            --dark-bg: #2c2c2c; --dark-text: #ffffff; --dark-label: #f1c40f; 
+            --light-bg: #ffffff; --light-text: #000000; --light-label: #4682B4; 
+            --note-green: #2ecc71; --chord-red: #ff4d4d; 
+        }
+        body { font-family: 'Courier New', Courier, monospace; padding: 20px; background: #f0f2f5; }
+        .container { max-width: 1100px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 200px; margin-bottom: 15px; font-family: inherit; font-size: 14px; padding: 15px; border: 2px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; background: #fdfdfd; padding: 15px; border-radius: 8px; border: 1px solid #eee; }
+        input[type="text"] { padding: 8px; width: 45px; text-align: center; font-weight: bold; border: 2px solid #3498db; border-radius: 6px; }
+        button { padding: 10px 15px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; transition: 0.2s; }
+        .btn-main { background: #3498db; color: white; }
+        .btn-theme { background: #34495e; color: white; }
+        .btn-png { background: #e67e22; color: white; }
+        .btn-toggle { background: #9b59b6; color: white; }
+        #output-area { margin-top: 20px; border-radius: 8px; overflow: hidden; border: 1px solid #ccc; }
+        #output { white-space: pre-wrap; padding: 40px; line-height: 1.8; font-size: 17px; min-height: 200px; }
+        .theme-dark { background: var(--dark-bg) !important; color: var(--dark-text) !important; }
+        .theme-dark .label-main { color: var(--dark-label) !important; font-weight: bold; }
+        .theme-light { background: var(--light-bg) !important; color: var(--light-text) !important; }
+        .theme-light .label-main { color: var(--light-label) !important; font-weight: bold; }
+        .note-green { color: var(--note-green) !important; }
+        .chord-red { color: var(--chord-red) !important; font-weight: bold; }
+        .title-line { font-weight: bold; font-size: 1.2em; text-decoration: underline; display: block; margin-bottom: 10px; }
+        sup { font-size: 0.7em; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 style="margin-top:0">Chord Transposer V3.1</h2>
+    <textarea id="input" placeholder="Baris 1: Judul..."></textarea>
+    <div class="controls">
+        <div>K1: <input type="text" id="key1" value="G"></div>
+        <div>K2: <input type="text" id="key2" value="Ab"></div>
+        <button class="btn-main" onclick="process(false)">Translate Chords</button>
+        <button class="btn-toggle" onclick="process(true)">Numbers Only</button>
+        <button class="btn-theme" onclick="toggleTheme()">Switch Theme</button>
+        <button class="btn-png" onclick="downloadPNG()">Download PNG</button>
+    </div>
+    <div id="output-area"><div id="output" class="theme-dark">Hasil muncul di sini...</div></div>
+</div>
+
+<script>
+    const sharpScale = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    const flatScale  = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+    const intervals  = [0, 0, 2, 4, 5, 7, 9, 11]; 
+    let currentModeIsNumbers = false;
+
+    function getNoteIndex(note) {
+        let n = note.trim().toUpperCase();
+        const map = { "AB": "G#", "BB": "A#", "DB": "C#", "EB": "D#", "GB": "F#", "CB": "B", "FB": "E" };
+        let searchNote = map[n] || n;
+        let idx = sharpScale.indexOf(searchNote);
+        if (idx === -1) idx = flatScale.indexOf(searchNote);
+        return idx;
+    }
+
+    function translateSingle(token, rootKey, numbersOnly) {
+        if (numbersOnly) return token;
+        let rootIdx = getNoteIndex(rootKey);
+        if (rootIdx === -1) return token;
+        const useFlat = rootKey.includes('b') || rootKey.toUpperCase() === 'F';
+        const currentScale = useFlat ? flatScale : sharpScale;
+        
+        let cleanToken = token.replace(/-/g, 'm').replace(/o/g, '<sup>°</sup>');
+        let match = cleanToken.match(/^(b|#)?(\d)(.*)$/);
+        if (!match) return cleanToken;
+
+        let acc = (match[1] === 'b' ? -1 : (match[1] === '#' ? 1 : 0));
+        let num = parseInt(match[2]);
+        let suffix = match[3];
+
+        if (suffix.startsWith('b')) { acc -= 1; suffix = suffix.substring(1); }
+        else if (suffix.startsWith('#')) { acc += 1; suffix = suffix.substring(1); }
+
+        let finalIdx = (rootIdx + intervals[num] + acc) % 12;
+        if (finalIdx < 0) finalIdx += 12;
+        return currentScale[finalIdx] + suffix;
+    }
+
+    // Fungsi baru untuk memproses teks chord sambil menjaga spasi
+    function parseKeepSpaces(str, key, numOnly) {
+        // Regex ini mencari angka chord (beserta accidental/suffix) ATAU karakter lain (seperti spasi/tanda baca)
+        return str.replace(/(b|#)?\d[ob#\-m]*/gi, (match) => {
+            return translateSingle(match, key, numOnly);
+        });
+    }
+
+    function process(numbersOnly) {
+        currentModeIsNumbers = numbersOnly;
+        const lines = document.getElementById('input').value.split('\n');
+        const k1 = document.getElementById('key1').value;
+        const k2 = document.getElementById('key2').value;
+        let activeKey = k1;
+        let finalHTML = "";
+
+        lines.forEach((line, index) => {
+            if (index === 0 && line.trim() !== "") {
+                finalHTML += `<span class="title-line">${line}</span>`;
+                return;
+            }
+
+            let placeholders = [];
+            let protectedLine = line.replace(/\((.*?)\)/g, (m) => { 
+                placeholders.push(m); 
+                return `__P${placeholders.length-1}__`; 
+            });
+
+            if (line.toLowerCase().includes('mod')) {
+                let m = line.match(/mod\s*\(([^)]+)\)/i);
+                activeKey = m ? m[1] : k2;
+            }
+
+            let words = protectedLine.split(/(\s+)/);
+            let processedLine = words.map(word => {
+                if (word.startsWith('__P')) return word;
+                let trimmed = word.trim();
+                if (!trimmed) return word;
+
+                if (/^(intro|verse|reff|interlude|bridge|mod)$/i.test(trimmed)) {
+                    return `<span class="label-main">${word}</span>`;
+                }
+
+                if (/\d/.test(trimmed)) {
+                    if (trimmed.includes('/')) return trimmed.split('/').map(s => parseKeepSpaces(s, activeKey, numbersOnly)).join('/');
+                    return parseKeepSpaces(trimmed, activeKey, numbersOnly);
+                }
+
+                if (trimmed.length >= 3) return `<span class="note-green">${word}</span>`;
+                return word;
+            }).join('');
+
+            processedLine = processedLine.replace(/__P(\d+)__/g, (m, i) => {
+                let orig = placeholders[i];
+                let content = orig.slice(1, -1).trim();
+                
+                if (content.toLowerCase().startsWith('rif')) {
+                    let inner = content.replace(/^rif\s*/i, '');
+                    if (!inner) return `<span class="chord-red">(rif)</span>`;
+                    return `<span class="chord-red">(${parseKeepSpaces(inner, activeKey, numbersOnly)})</span>`;
+                }
+                return `(${parseKeepSpaces(content, activeKey, numbersOnly)})`;
+            });
+            finalHTML += processedLine + "\n";
+        });
+        document.getElementById('output').innerHTML = finalHTML;
+    }
+
+    function toggleTheme() {
+        const o = document.getElementById('output');
+        o.classList.toggle('theme-dark'); o.classList.toggle('theme-light');
+    }
+
+    function downloadPNG() {
+        const lines = document.getElementById('input').value.split('\n');
+        const title = lines[0].trim() || "Untitled";
+        const k1 = document.getElementById('key1').value;
+        const k2 = document.getElementById('key2').value;
+        const fileName = currentModeIsNumbers ? `${title} (numbers)` : `${title} (${k1}-${k2})`;
+        
+        html2canvas(document.getElementById('output')).then(canvas => {
+            const link = document.createElement('a');
+            link.download = fileName + '.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        });
+    }
+</script>
+</body>
+</html>
